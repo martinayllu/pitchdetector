@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Note Visualizer</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 25px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .controls {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        button {
+            background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+            border: none;
+            color: white;
+            padding: 12px 30px;
+            margin: 0 10px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 800px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: inset 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .chart-scroll {
+            width: 100%;
+            height: 100%;
+            overflow-x: auto;
+            overflow-y: hidden;
+        }
+        
+        .chart {
+            position: relative;
+            width: 9600px;
+            height: 100%;
+            background: white;
+        }
+        
+        .grid-line {
+            position: absolute;
+            background: #dee2e6;
+        }
+        
+        .grid-line.sharp {
+            background: #000;
+            height: 3px;
+        }
+        
+        .grid-line.horizontal {
+            width: 100%;
+            height: 1px;
+        }
+        
+        .grid-line.vertical {
+            width: 1px;
+            height: 100%;
+        }
+        
+        .note-label {
+            position: absolute;
+            left: 5px;
+            font-size: 12px;
+            font-weight: bold;
+            color: #495057;
+            transform: translateY(-6px);
+        }
+        
+        .time-label {
+            position: absolute;
+            bottom: 5px;
+            font-size: 10px;
+            color: #6c757d;
+            transform: translateX(-10px);
+        }
+        
+        .note-point {
+            position: absolute;
+            background: #ff4757;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 2px 8px rgba(255, 71, 87, 0.4);
+            animation: noteAppear 0.3s ease-out;
+        }
+        
+        @keyframes noteAppear {
+            from {
+                opacity: 0;
+                transform: translate(-50%, -50%) scale(0.5);
+            }
+            to {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1);
+            }
+        }
+        
+        .status {
+            text-align: center;
+            margin-bottom: 15px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .status.recording {
+            color: #ff4757;
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        
+        .info {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 Music Note Visualizer</h1>
+        
+        <div class="controls">
+            <button id="startBtn">🎤 Start</button>
+            <button id="endBtn" disabled>⏹ End</button>
+        </div>
+        
+        <div class="status" id="status">Press Start to begin</div>
+        
+        <div class="chart-container">
+            <div class="chart-scroll" id="chartScroll">
+                <div class="chart" id="chart"></div>
+            </div>
+        </div>
+        
+        <div class="info">
+            <strong>Instructions:</strong> Click "Start" to begin capturing audio from your microphone. 
+            The visualizer will automatically detect musical notes and display them on the chart. 
+            The X-axis represents time (every 0.25 seconds), and the Y-axis shows notes from E2 to C6.
+        </div>
+    </div>
+
+    <script>
+        class MusicNoteVisualizer {
+            constructor() {
+                this.audioContext = null;
+                this.analyser = null;
+                this.microphone = null;
+                this.isRecording = false;
+                this.startTime = 0;
+                
+                this.chart = document.getElementById('chart');
+                this.chartScroll = document.getElementById('chartScroll');
+                this.startBtn = document.getElementById('startBtn');
+                this.endBtn = document.getElementById('endBtn');
+                this.status = document.getElementById('status');
+                
+                // Notas musicales desde E2 hasta C6
+                this.notes = [
+                    'C6', 'B5', 'A#5', 'A5', 'G#5', 'G5', 'F#5', 'F5', 'E5', 'D#5', 'D5', 'C#5',
+                    'C5', 'B4', 'A#4', 'A4', 'G#4', 'G4', 'F#4', 'F4', 'E4', 'D#4', 'D4', 'C#4',
+                    'C4', 'B3', 'A#3', 'A3', 'G#3', 'G3', 'F#3', 'F3', 'E3', 'D#3', 'D3', 'C#3',
+                    'C3', 'B2', 'A#2', 'A2', 'G#2', 'G2', 'F#2', 'F2', 'E2'
+                ];
+                
+                // Frecuencias correspondientes (Hz)
+                this.frequencies = [
+                    1046.50, 987.77, 932.33, 880.00, 830.61, 783.99, 739.99, 698.46, 659.25, 622.25, 587.33, 554.37,
+                    523.25, 493.88, 466.16, 440.00, 415.30, 392.00, 369.99, 349.23, 329.63, 311.13, 293.66, 277.18,
+                    261.63, 246.94, 233.08, 220.00, 207.65, 196.00, 185.00, 174.61, 164.81, 155.56, 146.83, 138.59,
+                    130.81, 123.47, 116.54, 110.00, 103.83, 98.00, 92.50, 87.31, 82.41
+                ];
+                
+                this.initChart();
+                this.bindEvents();
+            }
+            
+            initChart() {
+                const chartHeight = 800;
+                const noteSpacing = chartHeight / (this.notes.length + 1);
+                const timeSpacing = 40; // 40px per second, 10px per quarter second
+                
+                // Horizontal lines (notes)
+                this.notes.forEach((note, index) => {
+                    const y = noteSpacing * (index + 1);
+                    
+                    const line = document.createElement('div');
+                    line.className = 'grid-line horizontal';
+                    
+                    // Sharp/flat notes get thick black lines
+                    if (note.includes('#')) {
+                        line.classList.add('sharp');
+                    }
+                    
+                    line.style.top = y + 'px';
+                    this.chart.appendChild(line);
+                    
+                    const label = document.createElement('div');
+                    label.className = 'note-label';
+                    label.textContent = note;
+                    label.style.top = y + 'px';
+                    this.chart.appendChild(label);
+                });
+                
+                // Vertical lines (time) - 240 seconds * 4 quarters = 960 lines
+                for (let i = 0; i <= 960; i++) {
+                    const x = 50 + (i * timeSpacing / 4); // Start at x=50, every quarter second
+                    
+                    const line = document.createElement('div');
+                    line.className = 'grid-line vertical';
+                    line.style.left = x + 'px';
+                    this.chart.appendChild(line);
+                    
+                    if (i % 4 === 0) { // Label every second
+                        const label = document.createElement('div');
+                        label.className = 'time-label';
+                        label.textContent = (i / 4) + 's';
+                        label.style.left = x + 'px';
+                        this.chart.appendChild(label);
+                    }
+                }
+            }
+            
+            bindEvents() {
+                this.startBtn.addEventListener('click', () => this.startRecording());
+                this.endBtn.addEventListener('click', () => this.stopRecording());
+            }
+            
+            async startRecording() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    this.analyser = this.audioContext.createAnalyser();
+                    this.microphone = this.audioContext.createMediaStreamSource(stream);
+                    
+                    // Enhanced analyzer settings for better frequency resolution
+                    this.analyser.fftSize = 8192; // Increased for better frequency resolution
+                    this.analyser.smoothingTimeConstant = 0.3; // Reduce smoothing for faster response
+                    this.analyser.minDecibels = -60;
+                    this.analyser.maxDecibels = -10;
+                    
+                    this.microphone.connect(this.analyser);
+                    
+                    this.isRecording = true;
+                    this.startTime = Date.now();
+                    
+                    this.startBtn.disabled = true;
+                    this.endBtn.disabled = false;
+                    this.status.textContent = '🔴 Recording...';
+                    this.status.className = 'status recording';
+                    
+                    this.detectNotes();
+                    
+                } catch (error) {
+                    console.error('Error accessing microphone:', error);
+                    this.status.textContent = 'Error: Could not access microphone';
+                }
+            }
+            
+            stopRecording() {
+                this.isRecording = false;
+                
+                if (this.audioContext) {
+                    this.audioContext.close();
+                }
+                
+                this.startBtn.disabled = false;
+                this.endBtn.disabled = true;
+                this.status.textContent = 'Recording stopped';
+                this.status.className = 'status';
+            }
+            
+            detectNotes() {
+                if (!this.isRecording) return;
+                
+                const bufferLength = this.analyser.frequencyBinCount;
+                const dataArray = new Float32Array(bufferLength);
+                this.analyser.getFloatFrequencyData(dataArray);
+                
+                const sampleRate = this.audioContext.sampleRate;
+                const frequencyStep = sampleRate / (2 * bufferLength);
+                
+                // Find the strongest frequency in our range
+                let maxAmplitude = -100;
+                let peakFrequency = 0;
+                
+                const minBin = Math.floor(80 / frequencyStep);   // E2 ≈ 82Hz
+                const maxBin = Math.floor(1100 / frequencyStep); // C6 ≈ 1047Hz
+                
+                for (let i = minBin; i < maxBin && i < bufferLength; i++) {
+                    if (dataArray[i] > maxAmplitude) {
+                        maxAmplitude = dataArray[i];
+                        peakFrequency = i * frequencyStep;
+                    }
+                }
+                
+                // Only process if amplitude is above threshold
+                if (maxAmplitude > -50 && peakFrequency > 80 && peakFrequency < 1100) {
+                    const detectedNote = this.frequencyToNote(peakFrequency);
+                    if (detectedNote) {
+                        this.plotNote(detectedNote);
+                        console.log(`Detected: ${peakFrequency.toFixed(1)}Hz -> ${detectedNote}`);
+                    }
+                }
+                
+                // Continue detecting every 250ms
+                setTimeout(() => this.detectNotes(), 250);
+            }
+            
+            frequencyToNote(frequency) {
+                // Find the closest note using the frequency table
+                let closestNote = null;
+                let smallestRatio = Infinity;
+                
+                this.frequencies.forEach((noteFreq, index) => {
+                    // Use ratio instead of absolute difference for better octave precision
+                    const ratio = Math.max(frequency / noteFreq, noteFreq / frequency);
+                    
+                    if (ratio < smallestRatio && ratio < 1.03) { // 3% tolerance (about 50 cents)
+                        smallestRatio = ratio;
+                        closestNote = this.notes[index];
+                    }
+                });
+                
+                return closestNote;
+            }
+            
+            plotNote(note) {
+                const currentTime = (Date.now() - this.startTime) / 1000; // Time in seconds
+                const noteIndex = this.notes.indexOf(note);
+                
+                const chartHeight = 800;
+                const noteSpacing = chartHeight / (this.notes.length + 1);
+                const timeSpacing = 40; // 40px per second
+                
+                const x = 50 + (currentTime * timeSpacing);
+                const y = noteSpacing * (noteIndex + 1);
+                
+                const notePoint = document.createElement('div');
+                notePoint.className = 'note-point';
+                notePoint.textContent = note;
+                notePoint.style.left = x + 'px';
+                notePoint.style.top = y + 'px';
+                
+                this.chart.appendChild(notePoint);
+                
+                // Auto-scroll to follow notes
+                if (x > this.chartScroll.scrollLeft + this.chartScroll.clientWidth - 200) {
+                    this.chartScroll.scrollLeft = x - this.chartScroll.clientWidth + 200;
+                }
+            }
+        }
+        
+        // Initialize when page loads
+        window.addEventListener('load', () => {
+            new MusicNoteVisualizer();
+        });
+    </script>
+</body>
+</html>
