@@ -61,6 +61,10 @@
             transform: none;
         }
         
+        button.reset {
+            background: linear-gradient(45deg, #2ecc71, #27ae60);
+        }
+        
         .chart-container {
             position: relative;
             width: 100%;
@@ -171,6 +175,64 @@
             font-size: 14px;
             line-height: 1.6;
         }
+        
+        .settings {
+            background: rgba(255, 255, 255, 0.15);
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        
+        .setting-item {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .setting-label {
+            font-weight: bold;
+            font-size: 14px;
+            color: #fff;
+        }
+        
+        .setting-value {
+            font-size: 12px;
+            color: #ddd;
+            margin-bottom: 5px;
+        }
+        
+        .slider {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.3);
+            outline: none;
+            -webkit-appearance: none;
+        }
+        
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #ff6b6b;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+        
+        .slider::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #ff6b6b;
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
     </style>
 </head>
 <body>
@@ -180,6 +242,30 @@
         <div class="controls">
             <button id="startBtn">🎤 Start</button>
             <button id="endBtn" disabled>⏹ End</button>
+            <button id="resetBtn" class="reset">🔄 Reset</button>
+        </div>
+        
+        <div class="settings">
+            <div class="setting-item">
+                <div class="setting-label">Amplitude Threshold</div>
+                <div class="setting-value" id="amplitudeValue">-55 dB</div>
+                <input type="range" id="amplitudeSlider" class="slider" min="-80" max="-30" value="-55" step="1">
+            </div>
+            <div class="setting-item">
+                <div class="setting-label">FFT Size</div>
+                <div class="setting-value" id="fftValue">8192</div>
+                <input type="range" id="fftSlider" class="slider" min="0" max="4" value="2" step="1">
+            </div>
+            <div class="setting-item">
+                <div class="setting-label">Smoothing</div>
+                <div class="setting-value" id="smoothingValue">0.5</div>
+                <input type="range" id="smoothingSlider" class="slider" min="0" max="0.9" value="0.5" step="0.1">
+            </div>
+            <div class="setting-item">
+                <div class="setting-label">Min Decibels</div>
+                <div class="setting-value" id="minDecibelValue">-65 dB</div>
+                <input type="range" id="minDecibelSlider" class="slider" min="-90" max="-40" value="-65" step="1">
+            </div>
         </div>
         
         <div class="status" id="status">Press Start to begin</div>
@@ -194,6 +280,13 @@
             <strong>Instructions:</strong> Click "Start" to begin capturing audio from your microphone. 
             The visualizer will automatically detect musical notes and display them on the chart. 
             The X-axis represents time (every 0.25 seconds), and the Y-axis shows notes from E2 to C6.
+            Use "Reset" to clear the chart and start from time 0.
+            <br><br>
+            <strong>Settings:</strong> Adjust the sliders above to fine-tune detection sensitivity:
+            <br>• <strong>Amplitude Threshold:</strong> Minimum volume level to detect notes (-30 = very sensitive, -80 = less sensitive)
+            <br>• <strong>FFT Size:</strong> Frequency resolution (higher = more precise but slower)
+            <br>• <strong>Smoothing:</strong> How much to smooth the audio signal (0 = no smoothing, 0.9 = very smooth)
+            <br>• <strong>Min Decibels:</strong> Minimum signal strength to process (-40 = loud sounds only, -90 = all sounds)
         </div>
     </div>
 
@@ -205,11 +298,23 @@
                 this.microphone = null;
                 this.isRecording = false;
                 this.startTime = 0;
+                this.lastDetectedNote = null;
+                this.lastDetectionTime = 0;
+                this.stream = null;
+                
+                // Settings
+                this.settings = {
+                    amplitudeThreshold: -55,
+                    fftSize: 8192,
+                    smoothing: 0.5,
+                    minDecibels: -65
+                };
                 
                 this.chart = document.getElementById('chart');
                 this.chartScroll = document.getElementById('chartScroll');
                 this.startBtn = document.getElementById('startBtn');
                 this.endBtn = document.getElementById('endBtn');
+                this.resetBtn = document.getElementById('resetBtn');
                 this.status = document.getElementById('status');
                 
                 // Notas musicales desde E2 hasta C6
@@ -230,12 +335,16 @@
                 
                 this.initChart();
                 this.bindEvents();
+                this.initSliders();
             }
             
             initChart() {
                 const chartHeight = 800;
                 const noteSpacing = chartHeight / (this.notes.length + 1);
                 const timeSpacing = 40; // 40px per second, 10px per quarter second
+                
+                // Clear existing chart content
+                this.chart.innerHTML = '';
                 
                 // Horizontal lines (notes)
                 this.notes.forEach((note, index) => {
@@ -281,20 +390,91 @@
             bindEvents() {
                 this.startBtn.addEventListener('click', () => this.startRecording());
                 this.endBtn.addEventListener('click', () => this.stopRecording());
+                this.resetBtn.addEventListener('click', () => this.resetChart());
+            }
+            
+            initSliders() {
+                // FFT Size mapping (powers of 2 from 1024 to 16384)
+                this.fftSizes = [1024, 2048, 4096, 8192, 16384];
+                
+                // Amplitude Threshold Slider
+                const amplitudeSlider = document.getElementById('amplitudeSlider');
+                const amplitudeValue = document.getElementById('amplitudeValue');
+                amplitudeSlider.addEventListener('input', (e) => {
+                    this.settings.amplitudeThreshold = parseInt(e.target.value);
+                    amplitudeValue.textContent = `${this.settings.amplitudeThreshold} dB`;
+                    this.updateAnalyser();
+                });
+                
+                // FFT Size Slider
+                const fftSlider = document.getElementById('fftSlider');
+                const fftValue = document.getElementById('fftValue');
+                fftSlider.addEventListener('input', (e) => {
+                    this.settings.fftSize = this.fftSizes[parseInt(e.target.value)];
+                    fftValue.textContent = this.settings.fftSize.toString();
+                    this.updateAnalyser();
+                });
+                
+                // Smoothing Slider
+                const smoothingSlider = document.getElementById('smoothingSlider');
+                const smoothingValue = document.getElementById('smoothingValue');
+                smoothingSlider.addEventListener('input', (e) => {
+                    this.settings.smoothing = parseFloat(e.target.value);
+                    smoothingValue.textContent = this.settings.smoothing.toString();
+                    this.updateAnalyser();
+                });
+                
+                // Min Decibels Slider
+                const minDecibelSlider = document.getElementById('minDecibelSlider');
+                const minDecibelValue = document.getElementById('minDecibelValue');
+                minDecibelSlider.addEventListener('input', (e) => {
+                    this.settings.minDecibels = parseInt(e.target.value);
+                    minDecibelValue.textContent = `${this.settings.minDecibels} dB`;
+                    this.updateAnalyser();
+                });
+            }
+            
+            updateAnalyser() {
+                if (this.analyser) {
+                    this.analyser.fftSize = this.settings.fftSize;
+                    this.analyser.smoothingTimeConstant = this.settings.smoothing;
+                    this.analyser.minDecibels = this.settings.minDecibels;
+                }
+            }
+            
+            resetChart() {
+                // Stop recording if active
+                if (this.isRecording) {
+                    this.stopRecording();
+                }
+                
+                // Reset chart
+                this.initChart();
+                
+                // Reset scroll position
+                this.chartScroll.scrollLeft = 0;
+                
+                // Reset status
+                this.status.textContent = 'Chart reset - Press Start to begin';
+                this.status.className = 'status';
+                
+                // Reset detection variables
+                this.lastDetectedNote = null;
+                this.lastDetectionTime = 0;
             }
             
             async startRecording() {
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     
                     this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
                     this.analyser = this.audioContext.createAnalyser();
-                    this.microphone = this.audioContext.createMediaStreamSource(stream);
+                    this.microphone = this.audioContext.createMediaStreamSource(this.stream);
                     
-                    // Enhanced analyzer settings for better frequency resolution
-                    this.analyser.fftSize = 8192; // Increased for better frequency resolution
-                    this.analyser.smoothingTimeConstant = 0.3; // Reduce smoothing for faster response
-                    this.analyser.minDecibels = -60;
+                    // Use current settings for analyzer
+                    this.analyser.fftSize = this.settings.fftSize;
+                    this.analyser.smoothingTimeConstant = this.settings.smoothing;
+                    this.analyser.minDecibels = this.settings.minDecibels;
                     this.analyser.maxDecibels = -10;
                     
                     this.microphone.connect(this.analyser);
@@ -320,6 +500,10 @@
                 
                 if (this.audioContext) {
                     this.audioContext.close();
+                }
+                
+                if (this.stream) {
+                    this.stream.getTracks().forEach(track => track.stop());
                 }
                 
                 this.startBtn.disabled = false;
@@ -352,11 +536,13 @@
                     }
                 }
                 
-                // Only process if amplitude is above threshold
-                if (maxAmplitude > -50 && peakFrequency > 80 && peakFrequency < 1100) {
+                // Only process if amplitude is above threshold (use current setting)
+                if (maxAmplitude > this.settings.amplitudeThreshold && peakFrequency > 80 && peakFrequency < 1100) {
                     const detectedNote = this.frequencyToNote(peakFrequency);
-                    if (detectedNote) {
+                    if (detectedNote && this.shouldPlotNote(detectedNote)) {
                         this.plotNote(detectedNote);
+                        this.lastDetectedNote = detectedNote;
+                        this.lastDetectionTime = Date.now();
                         console.log(`Detected: ${peakFrequency.toFixed(1)}Hz -> ${detectedNote}`);
                     }
                 }
@@ -365,16 +551,63 @@
                 setTimeout(() => this.detectNotes(), 250);
             }
             
+            findPeaks(dataArray, frequencyStep) {
+                const peaks = [];
+                const minBin = Math.floor(80 / frequencyStep);   // E2 ≈ 82Hz
+                const maxBin = Math.floor(1100 / frequencyStep); // C6 ≈ 1047Hz
+                const threshold = -45; // Minimum amplitude threshold
+                
+                for (let i = minBin + 2; i < maxBin - 2 && i < dataArray.length; i++) {
+                    if (dataArray[i] > threshold &&
+                        dataArray[i] > dataArray[i-1] && dataArray[i] > dataArray[i-2] &&
+                        dataArray[i] > dataArray[i+1] && dataArray[i] > dataArray[i+2]) {
+                        
+                        peaks.push({
+                            frequency: i * frequencyStep,
+                            amplitude: dataArray[i]
+                        });
+                    }
+                }
+                
+                return peaks.sort((a, b) => b.amplitude - a.amplitude);
+            }
+            
+            selectDominantFrequency(peaks) {
+                if (peaks.length === 0) return 0;
+                
+                // Filter out harmonics - prefer fundamental frequencies
+                const fundamentals = peaks.filter(peak => {
+                    return !peaks.some(other => 
+                        other !== peak && 
+                        Math.abs(peak.frequency / other.frequency - Math.round(peak.frequency / other.frequency)) < 0.02
+                    );
+                });
+                
+                return fundamentals.length > 0 ? fundamentals[0].frequency : peaks[0].frequency;
+            }
+            
+            shouldPlotNote(note) {
+                const currentTime = Date.now();
+                
+                // Avoid plotting the same note too frequently (reduced from 500ms to 300ms)
+                if (this.lastDetectedNote === note && 
+                    currentTime - this.lastDetectionTime < 300) {
+                    return false;
+                }
+                
+                return true;
+            }
+            
             frequencyToNote(frequency) {
-                // Find the closest note using the frequency table
+                // Find the closest note using the frequency table with balanced tolerance
                 let closestNote = null;
                 let smallestRatio = Infinity;
                 
                 this.frequencies.forEach((noteFreq, index) => {
-                    // Use ratio instead of absolute difference for better octave precision
+                    // Use ratio for better octave precision with moderate tolerance
                     const ratio = Math.max(frequency / noteFreq, noteFreq / frequency);
                     
-                    if (ratio < smallestRatio && ratio < 1.03) { // 3% tolerance (about 50 cents)
+                    if (ratio < smallestRatio && ratio < 1.025) { // 2.5% tolerance - middle ground
                         smallestRatio = ratio;
                         closestNote = this.notes[index];
                     }
